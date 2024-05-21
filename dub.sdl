@@ -1,0 +1,6 @@
+name "ts"
+description "Timestamper."
+authors "Christian Köstlin"
+copyright "Copyright (c), Christian Koestlin"
+license "MIT"
+dependency "dime" version="~>0.0.9"

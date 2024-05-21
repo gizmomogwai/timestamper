@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/ts
+ts.so
+ts.dylib
+ts.dll
+ts.a
+ts.lib
+ts-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
