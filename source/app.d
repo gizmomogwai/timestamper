@@ -21,31 +21,37 @@ auto formatPart(Unit.Part part)
     return format!("%s%s")(part.value.to!string.rightJustify(part.digits, ' '), part.name);
 }
 
-string formatLine(SysTime start, Duration delta, string line)
+string formatLine(SysTime start, Duration totalDelta, Duration lineDelta, string line)
 {
-    auto h = TIME.transform(delta.total!("msecs")).map!(i => i.formatPart()).join(" ");
-    return format!("%s, %s: %s")(start.toISOString().leftJustify(22, '0'), h, line);
+    auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart()).join(" ");
+    auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart()).join(" ");
+    return format!("%s, %s, %s: %s")(start.toISOString().leftJustify(22, '0'), tD, lD, line);
 }
 
 void printer()
 {
-    auto startTime = Clock.currTime();
+    auto timeOfStart = Clock.currTime();
     bool done = false;
     string lastLine = "";
+    auto timeOfLastLine = timeOfStart;
     auto now = Clock.currTime;
-    auto delta = now - startTime;
+    auto totalDelta = now - timeOfStart;
+    auto lineDelta = now - timeOfLastLine;
     while (!done)
     {
         receive((string line) {
             now = Clock.currTime();
-            delta = now - startTime;
-            writeln("\r", formatLine(now, delta, lastLine));
+            totalDelta = now - timeOfStart;
+            lineDelta = now - timeOfLastLine;
+            writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
             lastLine = line.strip;
+            timeOfLastLine = now;
         }, (Tick _) { now = Clock.currTime; write("\r"); }, (LinkTerminated _) {
             done = true;
         },);
-        delta = now - startTime;
-        write(formatLine(now, delta, lastLine));
+        totalDelta = now - timeOfStart;
+        lineDelta = now - timeOfLastLine;
+        write(formatLine(now, totalDelta, lineDelta, lastLine));
         stdout.flush();
     }
 }
