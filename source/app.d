@@ -1,6 +1,7 @@
 import core.time : Duration, msecs;
 import std.algorithm : map;
-import std.concurrency : LinkTerminated, receive, receiveTimeout, send, spawnLinked, Tid;
+import std.concurrency : OwnerTerminated, LinkTerminated, receive,
+    receiveTimeout, send, spawnLinked, Tid;
 import std.conv : to;
 import std.datetime.systime : Clock, SysTime;
 import std.range : array, join;
@@ -30,29 +31,32 @@ string formatLine(SysTime start, Duration totalDelta, Duration lineDelta, string
 
 void printer()
 {
-    auto timeOfStart = Clock.currTime();
-    bool done = false;
-    string lastLine = "";
-    auto timeOfLastLine = timeOfStart;
-    auto now = Clock.currTime;
-    auto totalDelta = now - timeOfStart;
-    auto lineDelta = now - timeOfLastLine;
-    while (!done)
+    try
     {
-        receive((string line) {
-            now = Clock.currTime();
+        auto timeOfStart = Clock.currTime();
+        string lastLine = "";
+        auto timeOfLastLine = timeOfStart;
+        auto now = Clock.currTime;
+        auto totalDelta = now - timeOfStart;
+        auto lineDelta = now - timeOfLastLine;
+        while (true)
+        {
+            receive((string line) {
+                now = Clock.currTime();
+                totalDelta = now - timeOfStart;
+                lineDelta = now - timeOfLastLine;
+                writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
+                lastLine = line.strip;
+                timeOfLastLine = now;
+            }, (Tick _) { now = Clock.currTime; write("\r"); },);
             totalDelta = now - timeOfStart;
             lineDelta = now - timeOfLastLine;
-            writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
-            lastLine = line.strip;
-            timeOfLastLine = now;
-        }, (Tick _) { now = Clock.currTime; write("\r"); }, (LinkTerminated _) {
-            done = true;
-        },);
-        totalDelta = now - timeOfStart;
-        lineDelta = now - timeOfLastLine;
-        write(formatLine(now, totalDelta, lineDelta, lastLine));
-        stdout.flush();
+            write(formatLine(now, totalDelta, lineDelta, lastLine));
+            stdout.flush();
+        }
+    }
+    catch (OwnerTerminated _)
+    {
     }
 }
 
@@ -61,13 +65,28 @@ void lineUpdater(Tid printer)
     bool done = false;
     while (!done)
     {
-        receiveTimeout(1000.msecs, (LinkTerminated _) { done = true; },);
-        printer.send(Tick());
+        receiveTimeout(1000.msecs, (OwnerTerminated _) { done = true; },);
+        if (!done)
+        {
+            printer.send(Tick());
+        }
     }
 }
 
 int main(string[] args)
 {
+    if (args.length > 1 && args[1] == "test")
+    {
+        import core.thread.osthread : Thread;
+
+        writeln(1);
+        Thread.sleep(2000.msecs);
+        writeln(2);
+        Thread.sleep(2000.msecs);
+        writeln(3);
+        Thread.sleep(2000.msecs);
+        return 0;
+    }
     auto printerThread = spawnLinked(&printer);
     auto updater = spawnLinked(&lineUpdater, printerThread);
 
