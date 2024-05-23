@@ -1,4 +1,4 @@
-import core.time : Duration, msecs;
+import core.time : Duration, msecs, seconds;
 import std.algorithm : map;
 import std.concurrency : OwnerTerminated, LinkTerminated, receive,
     receiveTimeout, send, spawnLinked, Tid;
@@ -9,28 +9,29 @@ import std.stdio : stdin, stdout, write, writeln;
 import std.string : format, leftJustify, rightJustify, strip;
 import unit : Unit;
 
-struct Tick
-{
-}
-
 static immutable TIME = Unit("time", [
-    Unit.Scale("ms", 1, 3), Unit.Scale("s", 1000, 2), Unit.Scale("m", 60, 4),
+    Unit.Scale("", 1, 3), Unit.Scale(".", 1000, 2), Unit.Scale(":", 60, 4),
 ]);
 
 auto formatPart(Unit.Part part)
 {
-    return format!("%s%s")(part.value.to!string.rightJustify(part.digits, ' '), part.name);
+    return format!("%s%s")(part.value.to!string.rightJustify(part.digits, '0'), part.name);
 }
 
 string formatLine(SysTime start, Duration totalDelta, Duration lineDelta, string line)
 {
-    auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart()).join(" ");
-    auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart()).join(" ");
-    return format!("%s, %s, %s: %s")(start.toISOString().leftJustify(22, '0'), tD, lD, line);
+    auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart).join("");
+    auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart).join("");
+    return format!("%s|%s|%s: %s")(start.toISOExtString().leftJustify(26, '0'), tD, lD, line);
+}
+
+struct Tick
+{
 }
 
 void printer()
 {
+    // dfmt off
     try
     {
         auto timeOfStart = Clock.currTime();
@@ -41,14 +42,21 @@ void printer()
         auto lineDelta = now - timeOfLastLine;
         while (true)
         {
-            receive((string line) {
-                now = Clock.currTime();
-                totalDelta = now - timeOfStart;
-                lineDelta = now - timeOfLastLine;
-                writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
-                lastLine = line.strip;
-                timeOfLastLine = now;
-            }, (Tick _) { now = Clock.currTime; write("\r"); },);
+            receive(
+                (string line)
+                {
+                    now = Clock.currTime();
+                    totalDelta = now - timeOfStart;
+                    lineDelta = now - timeOfLastLine;
+                    writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
+                    lastLine = line.strip;
+                    timeOfLastLine = now;
+                },
+                (Tick _)
+                {
+                    now = Clock.currTime; write("\r");
+                },
+            );
             totalDelta = now - timeOfStart;
             lineDelta = now - timeOfLastLine;
             write(formatLine(now, totalDelta, lineDelta, lastLine));
@@ -58,19 +66,29 @@ void printer()
     catch (OwnerTerminated _)
     {
     }
+    // dfmt on
 }
 
 void lineUpdater(Tid printer)
 {
-    bool done = false;
-    while (!done)
+    // dfmt off
+    try
     {
-        receiveTimeout(1000.msecs, (OwnerTerminated _) { done = true; },);
-        if (!done)
+        while (true)
         {
+            receiveTimeout(
+              1000.msecs,
+              (Tick _)
+              {
+              },
+            );
             printer.send(Tick());
         }
     }
+    catch (OwnerTerminated _)
+    {
+    }
+    // dfmt on
 }
 
 int main(string[] args)
@@ -79,12 +97,12 @@ int main(string[] args)
     {
         import core.thread.osthread : Thread;
 
-        writeln(1);
-        Thread.sleep(2000.msecs);
-        writeln(2);
-        Thread.sleep(2000.msecs);
-        writeln(3);
-        Thread.sleep(2000.msecs);
+        for (int i = 1; i < 6; ++i)
+        {
+            writeln(i);
+            stdout.flush();
+            Thread.sleep(2.seconds);
+        }
         return 0;
     }
     auto printerThread = spawnLinked(&printer);
