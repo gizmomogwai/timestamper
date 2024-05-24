@@ -1,0 +1,1 @@
+timestamp of the output|total duration until output appeared|duration till next output

@@ -1,0 +1,8 @@
+name "timestamper"
+description "A stdout/stderr timestamping application."
+authors "Christian Koestlin"
+copyright "Copyright (c) 2024, Christian Koestlin"
+license "MIT"
+dependency "photon" version="~>0.10.0"
+dependency "dime" version="~>0.0.9"
+targetPath "out/main"
