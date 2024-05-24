@@ -1,13 +1,15 @@
 import core.time : Duration, msecs, seconds;
 import std.algorithm : map;
-import std.concurrency : OwnerTerminated, LinkTerminated, receive,
+import std.concurrency : OwnerTerminated, LinkTerminated, receive, ownerTid,
     receiveTimeout, send, spawnLinked, Tid;
 import std.conv : to;
 import std.datetime.systime : Clock, SysTime;
 import std.range : array, join;
-import std.stdio : stdin, stdout, write, writeln;
+import std.stdio : stderr, stdin, stdout, write, writeln, File;
 import std.string : format, leftJustify, rightJustify, strip;
 import unit : Unit;
+import std.process : pipeProcess;
+import colored : red;
 
 static immutable TIME = Unit("time", [
     Unit.Scale("", 1, 3), Unit.Scale(".", 1000, 2), Unit.Scale(":", 60, 4),
@@ -18,49 +20,84 @@ auto formatPart(Unit.Part part)
     return format!("%s%s")(part.value.to!string.rightJustify(part.digits, '0'), part.name);
 }
 
-string formatLine(SysTime start, Duration totalDelta, Duration lineDelta, string line)
+string formatLine(string line, bool isStdout, SysTime time, Duration totalDelta, Duration lineDelta)
 {
     auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart).join("");
     auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart).join("");
-    return format!("%s|%s|%s: %s")(start.toISOExtString().leftJustify(26, '0'), tD, lD, line);
+    return format!("%s|%s|%s: %s")(time.toISOExtString().leftJustify(26, '0'), tD, lD, isStdout ? line:line.red.to!string);
+}
+
+class State {
+public:
+    immutable(SysTime) timeOfStart;
+    string line = "";
+    bool isStdout = true;
+    SysTime timeOfLine;
+    uint done = 0;
+    this()
+    {
+        timeOfStart = Clock.currTime();
+        timeOfLine = Clock.currTime();
+    }
+
+    Duration durationOfLine(SysTime now) {
+        return now - timeOfLine;
+    }
+    Duration totalDuration(SysTime now) {
+        return now - timeOfStart;
+    }
+    // add a new line to the output
+    void newLine(string line, bool isStdout) {
+        renderFinishedLine();
+        this.line = line;
+        this.isStdout = isStdout;
+        this.timeOfLine = Clock.currTime();
+        renderCurrentLine();
+    }
+    // refresh the current line
+    void refreshLine()
+    {
+        renderCurrentLine();
+    }
+    // called when stdout or stderr is done
+    void streamDone() {
+        done++;
+    }
+    // checks if more events need to be processed
+    bool finished() {
+        return done >= 2;
+    }
+    // finishes the output
+    void finish() {
+        renderFinishedLine();
+    }
+    private void renderFinishedLine()
+    {
+        auto now = Clock.currTime();
+        writeln(line.formatLine(isStdout, timeOfLine, timeOfLine - timeOfStart, durationOfLine(now)));
+    }
+    private void renderCurrentLine() {
+        auto now = Clock.currTime();
+        write(line.formatLine(isStdout, now, totalDuration(now), durationOfLine(now)));
+        write("\r");
+    }
 }
 
 struct Tick
 {
 }
 
-void printer()
+void lineUpdater()
 {
     // dfmt off
     try
     {
-        auto timeOfStart = Clock.currTime();
-        string lastLine = "";
-        auto timeOfLastLine = timeOfStart;
-        auto now = Clock.currTime;
-        auto totalDelta = now - timeOfStart;
-        auto lineDelta = now - timeOfLastLine;
         while (true)
         {
-            receive(
-                (string line)
-                {
-                    now = Clock.currTime();
-                    totalDelta = now - timeOfStart;
-                    lineDelta = now - timeOfLastLine;
-                    writeln("\r", formatLine(now, totalDelta, lineDelta, lastLine));
-                    lastLine = line.strip;
-                    timeOfLastLine = now;
-                },
-                (Tick _)
-                {
-                    now = Clock.currTime; write("\r");
-                },
-            );
-            totalDelta = now - timeOfStart;
-            lineDelta = now - timeOfLastLine;
-            write(formatLine(now, totalDelta, lineDelta, lastLine));
-            stdout.flush();
+            // dfmt off
+            receiveTimeout(1000.msecs, (Tick _) {});
+            // dfmt on
+            ownerTid.send(Tick());
         }
     }
     catch (OwnerTerminated _)
@@ -69,48 +106,81 @@ void printer()
     // dfmt on
 }
 
-void lineUpdater(Tid printer)
+struct DataForStdout
 {
-    // dfmt off
-    try
+    string line;
+}
+
+struct DataForStderr
+{
+    string line;
+}
+
+void read(T)(shared(File delegate()) get)
+{
+    auto f = get();
+    foreach (line; f.byLineCopy())
     {
-        while (true)
-        {
-            receiveTimeout(
-              1000.msecs,
-              (Tick _)
-              {
-              },
-            );
-            printer.send(Tick());
-        }
+        ownerTid.send(T(line.idup));
     }
-    catch (OwnerTerminated _)
-    {
-    }
-    // dfmt on
 }
 
 int main(string[] args)
 {
+
     if (args.length > 1 && args[1] == "test")
     {
-        import core.thread.osthread : Thread;
-
-        for (int i = 1; i < 6; ++i)
-        {
-            writeln(i);
-            stdout.flush();
-            Thread.sleep(2.seconds);
-        }
+        test();
         return 0;
     }
-    auto printerThread = spawnLinked(&printer);
-    auto updater = spawnLinked(&lineUpdater, printerThread);
 
-    foreach (line; stdin.byLineCopy())
+    auto state = new State();
+    auto updater = spawnLinked(&lineUpdater);
+
+    auto pipes = pipeProcess(args[1 .. $]);
+    auto getStdout() => pipes.stdout; // strange workaround as more direct ways do not work for me
+    auto getStderr() => pipes.stderr;
+    spawnLinked(&read!(DataForStdout), cast(shared)&getStdout);
+    spawnLinked(&read!(DataForStderr), cast(shared)&getStderr);
+
+    while (!state.finished())
     {
-        printerThread.send(line);
+        receive(
+          (DataForStdout data)
+          {
+              state.newLine(data.line, true);
+          },
+          (DataForStderr data) {
+              state.newLine(data.line, false);
+          },
+          (Tick _)
+          {
+              state.refreshLine();
+          },
+          (LinkTerminated _) {
+              state.streamDone();
+          }
+        );
+        stdout.flush();
     }
+    state.finish();
     return 0;
+}
+
+void test()
+{
+    import core.thread.osthread : Thread;
+    import core.time : seconds;
+    for (int i = 1; i < 60; ++i)
+    {
+        Thread.sleep(2.seconds);
+        writeln(i);
+        stdout.flush();
+        if (i % 2 == 0)
+        {
+            stderr.writeln(i);
+            stderr.flush();
+        }
+        Thread.sleep(2.seconds);
+    }
 }
