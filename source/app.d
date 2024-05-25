@@ -1,4 +1,5 @@
 import core.time : Duration, msecs, seconds;
+import core.thread.osthread : Thread;
 import std.algorithm : map;
 import std.concurrency : OwnerTerminated, LinkTerminated, receive, ownerTid,
     receiveTimeout, send, spawnLinked, Tid;
@@ -24,7 +25,7 @@ string formatLine(string line, bool isStdout, SysTime time, Duration totalDelta,
 {
     auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart).join("");
     auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart).join("");
-    return format!("%s|%s|%s: %s")(time.toISOExtString().leftJustify(26, '0'), tD, lD, isStdout ? line:line.red.to!string);
+    return format!("%s|%s|%s: %s")(time.toISOExtString().leftJustify(35, 'X'), tD, lD, isStdout ? line:line.red.to!string);
 }
 
 class State {
@@ -89,6 +90,7 @@ struct Tick
 
 void lineUpdater()
 {
+    Thread.getThis().name("ticker");
     // dfmt off
     try
     {
@@ -116,8 +118,9 @@ struct DataForStderr
     string line;
 }
 
-void read(T)(shared(File delegate()) get)
+void read(T)(shared(File delegate()) get, string theName)
 {
+    Thread.getThis().name(theName);
     auto f = get();
     foreach (line; f.byLineCopy())
     {
@@ -133,15 +136,15 @@ int main(string[] args)
         test();
         return 0;
     }
-
+    Thread.getThis().name("main");
     auto state = new State();
     auto updater = spawnLinked(&lineUpdater);
 
     auto pipes = pipeProcess(args[1 .. $]);
     auto getStdout() => pipes.stdout; // strange workaround as more direct ways do not work for me
     auto getStderr() => pipes.stderr;
-    spawnLinked(&read!(DataForStdout), cast(shared)&getStdout);
-    spawnLinked(&read!(DataForStderr), cast(shared)&getStderr);
+    spawnLinked(&read!(DataForStdout), cast(shared)&getStdout, "stdoutReader");
+    spawnLinked(&read!(DataForStderr), cast(shared)&getStderr, "stderrReader");
 
     while (!state.finished())
     {
