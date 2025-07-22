@@ -90,7 +90,11 @@ struct Tick
 
 void lineUpdater()
 {
-    Thread.getThis().name("ticker");
+    import core.sys.darwin.pthread : pthread_setname_np;
+    import std.string : toStringz;
+
+    pthread_setname_np("ticker".toStringz());
+//    Thread.getThis().name("ticker");
     // dfmt off
     try
     {
