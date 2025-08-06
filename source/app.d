@@ -25,7 +25,7 @@ string formatLine(string line, bool isStdout, SysTime time, Duration totalDelta,
 {
     auto tD = TIME.transform(totalDelta.total!("msecs")).map!(i => i.formatPart).join("");
     auto lD = TIME.transform(lineDelta.total!("msecs")).map!(i => i.formatPart).join("");
-    return format!("%s|%s|%s: %s")(time.toISOExtString().leftJustify(35, 'X'), tD, lD, isStdout ? line:line.red.to!string);
+    return format!("%s|%s|%s: %s")(time.toISOExtString().leftJustify(27, '0'), tD, lD, isStdout ? line:line.red.to!string);
 }
 
 class State {
@@ -90,11 +90,12 @@ struct Tick
 
 void lineUpdater()
 {
-    import core.sys.darwin.pthread : pthread_setname_np;
-    import std.string : toStringz;
 
-    pthread_setname_np("ticker".toStringz());
-//    Thread.getThis().name("ticker");
+    version (OSX) {
+        import core.sys.darwin.pthread : pthread_setname_np;
+        import std.string : toStringz;
+        pthread_setname_np("ticker".toStringz());
+    }
     // dfmt off
     try
     {
